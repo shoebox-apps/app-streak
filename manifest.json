@@ -1,0 +1,7 @@
+{
+  "name": "Streak",
+  "version": "1.4.0",
+  "entry": "index.html",
+  "icon": "icon.png",
+  "repo": "https://github.com/shoebox-apps/app-streak"
+}

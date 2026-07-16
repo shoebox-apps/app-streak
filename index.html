@@ -1,0 +1,949 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#04060f">
+<title>Streak</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    overflow: hidden;
+    background: #04060f;
+    overscroll-behavior: none;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  canvas#c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+  .layer { position: fixed; inset: 0; pointer-events: none; }
+
+  /* HUD */
+  #hud {
+    position: fixed; left: 0; right: 0;
+    top: max(10px, env(safe-area-inset-top));
+    text-align: center; pointer-events: none;
+    opacity: 0; transition: opacity .25s ease;
+  }
+  #hud.on { opacity: 1; }
+  #streak {
+    font-size: 64px; font-weight: 800; color: #fff;
+    text-shadow: 0 0 18px rgba(120,220,255,.55), 0 2px 6px rgba(0,0,0,.6);
+    line-height: 1; letter-spacing: 2px;
+    display: inline-block;
+  }
+  #streak.pop { animation: pop .2s ease-out; }
+  @keyframes pop {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.38); }
+    100% { transform: scale(1); }
+  }
+  #best {
+    margin-top: 4px; font-size: 13px; font-weight: 600; letter-spacing: 3px;
+    color: rgba(255,255,255,.45);
+  }
+
+  /* first-run hint */
+  #hint {
+    position: fixed; left: 0; right: 0;
+    bottom: max(64px, calc(env(safe-area-inset-bottom) + 56px));
+    text-align: center; font-size: 16px; letter-spacing: 4px;
+    color: rgba(255,255,255,.55); text-transform: uppercase;
+    pointer-events: none; opacity: 0; transition: opacity .6s ease;
+  }
+  #hint.on { opacity: 1; animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: .28; } 50% { opacity: .8; } }
+
+  /* warmup onboarding instruction (start of each run) */
+  #warmup {
+    position: fixed; left: 0; right: 0; top: 33%;
+    text-align: center; pointer-events: none; opacity: 0;
+    transition: opacity .3s ease;
+  }
+  #warmup.on { opacity: 1; }
+  #warmup .wtitle {
+    font-size: clamp(20px, 6vw, 30px); font-weight: 800; letter-spacing: 3px;
+    color: #fff; text-transform: uppercase;
+    text-shadow: 0 0 16px rgba(120,220,255,.6);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+  #warmup .wsub {
+    margin-top: 10px; font-size: 12px; letter-spacing: 4px;
+    color: rgba(255,255,255,.45); text-transform: uppercase;
+  }
+
+  /* milestone flash */
+  #flash { background: radial-gradient(circle at 50% 45%, rgba(255,255,255,.30), rgba(255,255,255,0) 70%); opacity: 0; }
+  #flash.go { animation: flashA .55s ease-out; }
+  @keyframes flashA { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+  /* full-screen text overlays (title / game over / pause) */
+  .screen {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; pointer-events: none; color: #fff;
+    padding: env(safe-area-inset-top) 24px env(safe-area-inset-bottom);
+  }
+  .hidden { display: none !important; }
+
+  #title h1, #over .big {
+    font-size: clamp(56px, 18vw, 96px); font-weight: 900; letter-spacing: 6px;
+    background: linear-gradient(180deg, #9ff1ff, #d86bff);
+    -webkit-background-clip: text; background-clip: text;
+    -webkit-text-fill-color: transparent; color: transparent;
+    filter: drop-shadow(0 0 22px rgba(140,120,255,.45));
+    line-height: 1.05;
+  }
+  .tapline {
+    margin-top: 26px; font-size: 15px; letter-spacing: 5px; text-transform: uppercase;
+    color: rgba(255,255,255,.75); animation: pulse 1.6s ease-in-out infinite;
+  }
+  .sub { margin-top: 14px; font-size: 13px; letter-spacing: 3px; color: rgba(255,255,255,.4); }
+
+  #over { background: rgba(3,4,12,.42); opacity: 0; transition: opacity .28s ease; }
+  #over.show { opacity: 1; }
+  #over .label { font-size: 14px; letter-spacing: 6px; color: rgba(255,255,255,.55); margin-bottom: 6px; }
+  #newBest {
+    margin-top: 10px; font-size: 15px; font-weight: 800; letter-spacing: 4px;
+    color: #ffe27a; text-shadow: 0 0 14px rgba(255,215,90,.8);
+    animation: pop .4s ease-out;
+  }
+  #overBest { margin-top: 12px; font-size: 15px; letter-spacing: 4px; color: rgba(255,255,255,.6); }
+  #closeCalls { margin-top: 8px; font-size: 13px; letter-spacing: 2px; color: rgba(150,230,255,.75); }
+
+  #pause .big-p { font-size: 34px; font-weight: 800; letter-spacing: 8px; }
+
+  /* control-mode toggle (READY / OVER screens only) */
+  .modeWrap {
+    margin-top: 28px; display: flex; flex-direction: column; align-items: center;
+    pointer-events: none;
+  }
+  .modeLabel {
+    font-size: 11px; letter-spacing: 4px; color: rgba(255,255,255,.35);
+    text-transform: uppercase; margin-bottom: 9px;
+  }
+  .modeToggle {
+    display: inline-flex; pointer-events: auto;
+    border: 1px solid rgba(255,255,255,.20); border-radius: 999px; overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .pill {
+    appearance: none; -webkit-appearance: none; border: 0; background: transparent;
+    color: rgba(255,255,255,.55); font: inherit; font-weight: 800; font-size: 13px;
+    letter-spacing: 3px; padding: 10px 22px; cursor: pointer; outline: none;
+    transition: background .18s ease, color .18s ease;
+  }
+  .pill.sel {
+    background: linear-gradient(180deg, #9ff1ff, #d86bff);
+    color: #071018; text-shadow: none;
+  }
+  .modeHint {
+    margin-top: 10px; font-size: 11px; letter-spacing: 2px; color: rgba(255,255,255,.32);
+    text-transform: none; max-width: 240px;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="flash" class="layer"></div>
+
+<div id="hud">
+  <div id="streak">0</div>
+  <div id="best">BEST 0</div>
+</div>
+
+<div id="hint">tap to flip gravity</div>
+
+<div id="warmup">
+  <div class="wtitle" id="warmupTitle"></div>
+  <div class="wsub">get a feel for it…</div>
+</div>
+
+<div id="title" class="screen">
+  <h1>STREAK</h1>
+  <div class="tapline">tap to start</div>
+  <div class="sub" id="titleBest"></div>
+  <div class="modeWrap">
+    <div class="modeLabel">Control</div>
+    <div class="modeToggle" data-toggle>
+      <button class="pill" type="button" data-mode="tap">TAP</button>
+      <button class="pill" type="button" data-mode="drag">DRAG</button>
+    </div>
+    <div class="modeHint" id="modeHintTitle"></div>
+  </div>
+</div>
+
+<div id="over" class="screen hidden">
+  <div class="label">STREAK</div>
+  <div class="big" id="finalStreak">0</div>
+  <div id="newBest" class="hidden">NEW BEST</div>
+  <div id="overBest">BEST 0</div>
+  <div id="closeCalls" class="hidden"></div>
+  <div class="modeWrap">
+    <div class="modeLabel">Control</div>
+    <div class="modeToggle" data-toggle>
+      <button class="pill" type="button" data-mode="tap">TAP</button>
+      <button class="pill" type="button" data-mode="drag">DRAG</button>
+    </div>
+  </div>
+  <div class="tapline">tap to retry</div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="big-p">PAUSED</div>
+  <div class="tapline">tap to resume</div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   STREAK — a one-input dodge game, two control modes:
+     DRAG (default): hold & drag to steer proportionally
+     TAP           : tap to flip gravity up/down
+   A Shoebox bundle. One file, no libraries, no build step.
+   ============================================================ */
+
+// ===== PURE LOGIC (extracted for tests) =====
+function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// Distance from orb edge to nearest gap edge (positive = safely inside gap).
+function gapClearance(orbY, orbR, gapC, gapHalf) {
+  return gapHalf - Math.abs(orbY - gapC) - orbR;
+}
+
+function overlapsBarrierX(orbX, orbR, bx, bw) {
+  return orbX + orbR > bx && orbX - orbR < bx + bw;
+}
+
+// Circle vs axis-aligned rect (handles corners correctly).
+function circleRectHit(cx, cy, r, rx, ry, rw, rh) {
+  const nx = clamp(cx, rx, rx + rw);
+  const ny = clamp(cy, ry, ry + rh);
+  const dx = cx - nx, dy = cy - ny;
+  return dx * dx + dy * dy < r * r;
+}
+
+// Barrier = full-height column with a gap: two wall rects.
+// b: { x, w, c (gap center), half (gap half-height) }
+function barrierHit(orbX, orbY, orbR, b, H) {
+  if (!overlapsBarrierX(orbX, orbR, b.x, b.w)) return false;
+  const gapTop = b.c - b.half, gapBot = b.c + b.half;
+  return circleRectHit(orbX, orbY, orbR, b.x, 0, b.w, gapTop) ||
+         circleRectHit(orbX, orbY, orbR, b.x, gapBot, b.w, H - gapBot);
+}
+
+// Passed a barrier alive with very little room to spare?
+function isNearMiss(minClearance, orbR) {
+  return minClearance >= 0 && minClearance < orbR * 0.9;
+}
+
+// --- Difficulty curve (smooth exponential ramps, forgiving start) ---
+function speedFor(streak, W)    { return W * (0.40 + 0.42 * (1 - Math.exp(-streak / 26))); }
+function gapHalfFor(streak, H)  { return H * (0.175 - 0.062 * (1 - Math.exp(-streak / 22))); }
+function spacingFor(streak, W)  { return W * (0.78 - 0.24 * (1 - Math.exp(-streak / 30))); }
+function maxCenterShift(streak, H) { return H * (0.16 + 0.20 * (1 - Math.exp(-streak / 24))); }
+// ===== END PURE LOGIC =====
+
+// ---------- DOM ----------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const $ = id => document.getElementById(id);
+const hudEl = $('hud'), streakEl = $('streak'), bestEl = $('best');
+const hintEl = $('hint'), flashEl = $('flash');
+const warmupEl = $('warmup'), warmupTitleEl = $('warmupTitle');
+const titleEl = $('title'), titleBestEl = $('titleBest');
+const overEl = $('over'), finalStreakEl = $('finalStreak'), newBestEl = $('newBest');
+const overBestEl = $('overBest'), closeCallsEl = $('closeCalls');
+const pauseEl = $('pause');
+
+// ---------- persistence (guarded) ----------
+const BEST_KEY = 'streak.best.v1';
+const HINT_KEY = 'streak.hint.v1';
+const MODE_KEY = 'streak.mode.v1';
+function loadBest() {
+  try {
+    const v = parseInt(localStorage.getItem(BEST_KEY), 10);
+    return (Number.isFinite(v) && v >= 0 && v < 1e6) ? v : 0;
+  } catch (e) { return 0; }
+}
+function saveBest(v) { try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) {} }
+function hintSeen()  { try { return localStorage.getItem(HINT_KEY) === '1'; } catch (e) { return false; } }
+function markHint()  { try { localStorage.setItem(HINT_KEY, '1'); } catch (e) {} }
+// controlMode: 'drag' (proportional steering, forgiving default) or 'tap' (gravity flip)
+function loadMode() {
+  try { const v = localStorage.getItem(MODE_KEY); return (v === 'tap' || v === 'drag') ? v : 'drag'; }
+  catch (e) { return 'drag'; }
+}
+function saveMode(v) { try { localStorage.setItem(MODE_KEY, v); } catch (e) {} }
+
+function buzz(pattern) {
+  try { if (navigator.vibrate) navigator.vibrate(pattern); } catch (e) {}
+}
+
+// ---------- audio (all synthesized) ----------
+const AudioCtor = window.AudioContext || window.webkitAudioContext;
+let ac = null, master = null;
+function ensureAudio() {
+  if (!AudioCtor) return;
+  try {
+    if (!ac) {
+      ac = new AudioCtor();
+      master = ac.createGain();
+      master.gain.value = 0.4;
+      master.connect(ac.destination);
+    }
+    if (ac.state === 'suspended') ac.resume();
+  } catch (e) { ac = null; }
+}
+function tone(freq, dur, type, vol, freqEnd, when) {
+  if (!ac || ac.state !== 'running') return;
+  const t0 = ac.currentTime + (when || 0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, t0);
+  if (freqEnd) o.frequency.exponentialRampToValueAtTime(Math.max(30, freqEnd), t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  o.connect(g); g.connect(master);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function noiseBurst(dur, vol, fStart, fEnd) {
+  if (!ac || ac.state !== 'running') return;
+  const t0 = ac.currentTime;
+  const n = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, n, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type = 'lowpass';
+  f.frequency.setValueAtTime(fStart, t0);
+  f.frequency.exponentialRampToValueAtTime(Math.max(60, fEnd), t0 + dur);
+  const g = ac.createGain();
+  g.gain.setValueAtTime(vol, t0);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start(t0);
+}
+const sfx = {
+  flip()      { tone(300, 0.05, 'sine', 0.05, 190); },
+  pass(s)     { tone(380 + Math.min(s, 60) * 14, 0.09, 'triangle', 0.16); },
+  nearMiss()  { tone(880, 0.06, 'sine', 0.14, 1320); tone(1320, 0.09, 'sine', 0.10, 1760, 0.05); },
+  milestone() { tone(523, 0.12, 'triangle', 0.18); tone(784, 0.22, 'triangle', 0.18, 0, 0.09); },
+  death()     { noiseBurst(0.35, 0.5, 1400, 120); tone(170, 0.4, 'square', 0.18, 42); },
+  thud()      { tone(95, 0.06, 'sine', 0.08, 60); }
+};
+
+// ---------- canvas / world ----------
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  const ow = W, oh = H;
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.round(W * DPR);
+  canvas.height = Math.round(H * DPR);
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  if (ow > 0 && oh > 0 && (ow !== W || oh !== H)) {
+    const sx = W / ow, sy = H / oh;
+    orb.y *= sy;
+    for (const b of barriers) { b.x *= sx; b.w *= sx; b.c *= sy; b.half *= sy; }
+    initStars();
+  }
+}
+
+// ---------- game state ----------
+const READY = 0, PLAYING = 1, DYING = 2, OVER = 3, PAUSED = 4;
+let state = READY, stateBefore = READY;
+let warmup = 0;
+let best = loadBest();
+let streak = 0, closeCalls = 0;
+let gravityDir = 1;              // 1 = down, -1 = up   (tap mode only)
+let controlMode = loadMode();   // 'drag' (default) or 'tap'
+let pointerDown = false, pointerY = 0, steer = 0, keySteer = 0, prevSteerSign = 0;
+let timeScale = 1, slowTimer = 0;
+let deathTimer = 0, lockUntil = 0;
+let heat = 0, glowPulse = 0;
+let bobT = 0, flippedOnce = hintSeen();
+
+const orb = { x: 0, y: 0, vy: 0, r: 14, squash: 0 };
+let barriers = [];
+let particles = [];
+let floaters = [];
+let trail = [];
+let stars = [];
+let shake = 0;
+
+function orbRadius() { return Math.max(11, H * 0.021); }
+function gravity()   { return H * 2.9; }
+function vMax()      { return H * 1.15; }
+
+// ===== DRAG-MODE TUNING — hand-tune these =====
+const DRAG_ACCEL_FACTOR = 4.0;   // steer accel at full deflection = H * this
+const DRAG_IDLE_FALL    = 0.40;  // finger-up gentle fall = gravity() * this
+const DRAG_REACH        = 0.34;  // finger distance from midline mapping to full deflection = H * this
+const DRAG_DEADZONE     = 0.02;  // |offset| below this => neutral (tiny, so the midline is a crisp threshold)
+const DRAG_BASE_FRAC    = 0.42;  // steer authority the instant you're off the midline (fraction of full)
+const DRAG_CROSS_DAMP   = 0.70;  // bleed opposing momentum once when steer crosses the midline (decisive switch)
+function dragAccel() { return H * DRAG_ACCEL_FACTOR; }
+
+// ---- onboarding / first-gate easing ----
+const WARMUP_TIME     = 3.5;  // seconds of free movement (no gates) at the start of each run
+const EARLY_GAP_BONUS = 0.5;  // first gates are up to this much wider...
+const EARLY_GAP_DECAY = 3;    // ...decaying to normal over roughly this many streaks
+// ==============================================
+
+function initStars() {
+  stars = [];
+  const n = 46;
+  for (let i = 0; i < n; i++) {
+    stars.push({
+      x: Math.random() * W, y: Math.random() * H,
+      z: i < n * 0.55 ? 0.16 : 0.38,             // parallax factor
+      s: 0.6 + Math.random() * 1.6
+    });
+  }
+}
+
+function reset() {
+  streak = 0; closeCalls = 0; heat = 0; glowPulse = 0;
+  gravityDir = 1; steer = 0; keySteer = 0; timeScale = 1; slowTimer = 0; shake = 0;
+  orb.x = W * 0.32; orb.y = H * 0.5; orb.vy = 0; orb.squash = 0;
+  orb.r = orbRadius();
+  barriers = []; particles = []; floaters = []; trail = [];
+  warmup = WARMUP_TIME;   // free-movement onboarding; the first gate spawns when this ends
+  prevSteerSign = 0;
+  streakEl.textContent = '0';
+  bestEl.textContent = 'BEST ' + best;
+}
+
+function spawnBarrier(atX) {
+  // first gates are extra wide, easing to the normal curve by ~streak 6
+  const half = gapHalfFor(streak, H) * (1 + EARLY_GAP_BONUS * Math.exp(-streak / EARLY_GAP_DECAY));
+  const margin = half + H * 0.055;
+  let c;
+  const prev = barriers[barriers.length - 1];
+  if (prev) {
+    const shift = maxCenterShift(streak, H);
+    c = clamp(prev.c + (Math.random() * 2 - 1) * shift, margin, H - margin);
+  } else {
+    c = clamp(H * (0.35 + Math.random() * 0.3), margin, H - margin);
+  }
+  barriers.push({
+    x: atX, w: Math.max(20, W * 0.055),
+    c, half, scored: false, minC: Infinity
+  });
+}
+
+// ---------- particles / juice ----------
+function spawnParticles(x, y, n, hue, speed, life, size) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const v = speed * (0.3 + Math.random() * 0.7);
+    particles.push({
+      x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v,
+      life: 0, max: life * (0.6 + Math.random() * 0.8),
+      size: size * (0.5 + Math.random()), hue: hue + (Math.random() * 30 - 15)
+    });
+  }
+}
+function addFloater(x, y, text, size, hue) {
+  floaters.push({ x, y, text, size, hue, life: 0, max: 0.9 });
+}
+function popStreakCounter() {
+  streakEl.classList.remove('pop');
+  void streakEl.offsetWidth;
+  streakEl.classList.add('pop');
+}
+function milestoneFlash() {
+  flashEl.classList.remove('go');
+  void flashEl.offsetWidth;
+  flashEl.classList.add('go');
+}
+function orbHue() { return 185 + 145 * heat; }
+
+// ---------- state transitions ----------
+function startRun() {
+  reset();
+  state = PLAYING;
+  titleEl.classList.add('hidden');
+  overEl.classList.add('hidden');
+  overEl.classList.remove('show');
+  hudEl.classList.add('on');
+  // prominent onboarding instruction during the warmup (every run), replacing the subtle hint
+  warmupTitleEl.textContent = controlMode === 'drag' ? 'drag up / down to steer' : 'tap to flip gravity';
+  warmupEl.classList.add('on');
+  hintEl.classList.remove('on');
+}
+
+function die() {
+  state = DYING;
+  deathTimer = 0.55;
+  shake = 16;
+  timeScale = 1; slowTimer = 0;
+  trail = [];
+  spawnParticles(orb.x, orb.y, 34, orbHue(), H * 0.7, 0.9, 5);
+  spawnParticles(orb.x, orb.y, 12, 45, H * 0.45, 0.7, 3);
+  sfx.death();
+  buzz([70, 40, 90]);
+}
+
+function showGameOver() {
+  state = OVER;
+  lockUntil = performance.now() + 400;
+  finalStreakEl.textContent = streak;
+  const isNew = streak > best;
+  if (isNew) { best = streak; saveBest(best); }
+  newBestEl.classList.toggle('hidden', !isNew);
+  overBestEl.textContent = 'BEST ' + best;
+  if (closeCalls > 0) {
+    closeCallsEl.textContent = closeCalls + (closeCalls === 1 ? ' close call' : ' close calls');
+    closeCallsEl.classList.remove('hidden');
+  } else {
+    closeCallsEl.classList.add('hidden');
+  }
+  hudEl.classList.remove('on');
+  overEl.classList.remove('hidden');
+  requestAnimationFrame(() => overEl.classList.add('show'));
+}
+
+// ---------- input ----------
+function dismissHint() {
+  if (!flippedOnce) { flippedOnce = true; markHint(); hintEl.classList.remove('on'); }
+}
+// tap mode: invert gravity, keeping momentum with a mild damp when reversing
+function flip() {
+  gravityDir = -gravityDir;
+  if (Math.sign(orb.vy) !== gravityDir) orb.vy *= 0.82;
+  orb.squash = 0.18;
+  sfx.flip();
+}
+// handle start / retry / resume; returns true if it consumed the input
+function tryStart() {
+  const now = performance.now();
+  if (state === PAUSED) { state = stateBefore; pauseEl.classList.add('hidden'); lastT = 0; return true; }
+  if (state === READY) { startRun(); return true; }
+  if (state === OVER)  { if (now >= lockUntil) startRun(); return true; }
+  return false;
+}
+
+function onPointerDown(e) {
+  if (e.cancelable) e.preventDefault();
+  ensureAudio();
+  pointerDown = true;
+  pointerY = e.clientY;                 // CSS px, matches world H
+  if (tryStart()) return;
+  if (state === PLAYING) {
+    if (controlMode === 'tap') flip();  // drag mode steers via pointermove instead
+    dismissHint();
+  }
+}
+function onPointerMove(e) {
+  if (!pointerDown) return;
+  pointerY = e.clientY;
+  if (state === PLAYING && controlMode === 'drag') dismissHint();
+}
+function onPointerUp() { pointerDown = false; }
+
+window.addEventListener('pointerdown', onPointerDown, { passive: false });
+window.addEventListener('pointermove', onPointerMove, { passive: true });
+window.addEventListener('pointerup', onPointerUp);
+window.addEventListener('pointercancel', onPointerUp);
+
+window.addEventListener('keydown', e => {
+  const c = e.code;
+  if (c === 'Space' || c === 'ArrowUp' || c === 'ArrowDown' || c === 'KeyW' || c === 'KeyS') e.preventDefault();
+  ensureAudio();
+  if (state !== PLAYING) {
+    if (c === 'Space' || c === 'ArrowUp' || c === 'Enter') tryStart();
+    return;
+  }
+  if (controlMode === 'tap') {
+    if (c === 'Space' || c === 'ArrowUp') flip();
+  } else {                                // drag mode — keyboard steer for desktop testing
+    if (c === 'ArrowUp' || c === 'KeyW') { keySteer = -1; dismissHint(); }
+    else if (c === 'ArrowDown' || c === 'KeyS') { keySteer = 1; dismissHint(); }
+  }
+});
+window.addEventListener('keyup', e => {
+  const c = e.code;
+  if (c === 'ArrowUp' || c === 'KeyW' || c === 'ArrowDown' || c === 'KeyS') keySteer = 0;
+});
+window.addEventListener('contextmenu', e => e.preventDefault());
+window.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+
+// ---------- mode toggle (READY / OVER screens) ----------
+function renderModeToggles() {
+  document.querySelectorAll('.pill').forEach(p => {
+    p.classList.toggle('sel', p.dataset.mode === controlMode);
+  });
+  const mt = document.getElementById('modeHintTitle');
+  if (mt) mt.textContent = controlMode === 'drag'
+    ? 'Hold & drag up/down to steer. Release for a soft fall.'
+    : 'Tap anywhere to flip gravity up or down.';
+}
+document.querySelectorAll('[data-toggle]').forEach(tg => {
+  tg.addEventListener('pointerdown', e => {
+    const pill = e.target.closest('.pill');
+    if (!pill) return;
+    e.stopPropagation();                  // don't let this reach the game-start handler
+    e.preventDefault();
+    ensureAudio();
+    if (controlMode !== pill.dataset.mode) {
+      controlMode = pill.dataset.mode;
+      saveMode(controlMode);
+      renderModeToggles();
+      sfx.flip();
+    }
+  }, { passive: false });
+});
+
+function doPause() {
+  if (state === PLAYING || state === DYING) {
+    stateBefore = state;
+    state = PAUSED;
+    pauseEl.classList.remove('hidden');
+  }
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden) doPause(); });
+window.addEventListener('blur', doPause);
+window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 60));
+
+// ---------- update ----------
+function update(dt) {
+  bobT += dt;
+
+  // slow-mo recovery
+  if (slowTimer > 0) {
+    slowTimer -= dt;
+    if (slowTimer <= 0) timeScale = 1;
+  } else if (timeScale < 1) {
+    timeScale = Math.min(1, timeScale + dt * 4);
+  }
+
+  shake = Math.max(0, shake - dt * 42);
+  glowPulse = Math.max(0, glowPulse - dt * 2.2);
+  orb.squash = Math.max(0, orb.squash - dt * 1.4);
+
+  // particles & floaters run on real time (so death shatter animates during freeze)
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.life += dt;
+    if (p.life >= p.max) { particles.splice(i, 1); continue; }
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vx *= (1 - dt * 2.2); p.vy *= (1 - dt * 2.2);
+    p.vy += H * 0.55 * dt * gravityDir;
+  }
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.life += dt;
+    if (f.life >= f.max) floaters.splice(i, 1);
+    else f.y -= H * 0.06 * dt;
+  }
+
+  if (state === DYING) {
+    deathTimer -= dt;
+    if (deathTimer <= 0) showGameOver();
+    return;
+  }
+  if (state !== PLAYING) {
+    // idle drift on title / game-over
+    const sp = W * 0.12 * dt;
+    for (const st of stars) { st.x -= sp * st.z * 3; if (st.x < -2) { st.x = W + 2; st.y = Math.random() * H; } }
+    return;
+  }
+
+  const wdt = dt * timeScale;
+  const speed = speedFor(streak, W);
+  heat = 1 - Math.exp(-streak / 25);
+
+  // warmup: free movement, no gates yet, instruction showing — then the first gate spawns
+  if (warmup > 0) {
+    warmup -= dt;
+    if (warmup <= 0) warmupEl.classList.remove('on');
+  }
+
+  // orb physics — input maps to acceleration (mode-dependent), momentum integrates
+  if (controlMode === 'drag') {
+    let accel;
+    if (pointerDown) {
+      let o = clamp((pointerY - H * 0.5) / (H * DRAG_REACH), -1, 1);
+      if (Math.abs(o) < DRAG_DEADZONE) o = 0;
+      steer = o;
+      if (o !== 0) {
+        // force floor: instant authority the moment you're on a side, ramping to full at the edge
+        const mag = DRAG_BASE_FRAC + (1 - DRAG_BASE_FRAC) * Math.abs(o);
+        accel = Math.sign(o) * mag * dragAccel();  // below midline -> down; above -> up
+      } else {
+        accel = 0;                          // right on the midline -> coast
+      }
+    } else if (keySteer !== 0) {
+      steer = keySteer;
+      accel = keySteer * dragAccel();
+    } else {
+      steer = 0;
+      accel = gravity() * DRAG_IDLE_FALL; // finger up -> predictable soft drop
+    }
+    // decisive switch: the frame your steer crosses the midline, bleed the old momentum
+    const curSign = Math.sign(steer);
+    if (curSign !== 0 && prevSteerSign !== 0 && curSign !== prevSteerSign) orb.vy *= DRAG_CROSS_DAMP;
+    if (curSign !== 0) prevSteerSign = curSign;
+    orb.vy += accel * wdt;
+  } else {
+    // tap mode — gravity genuinely accelerates in the current direction
+    orb.vy += gravity() * gravityDir * wdt;
+  }
+  orb.vy = clamp(orb.vy, -vMax(), vMax());
+  orb.y += orb.vy * wdt;
+
+  // floor / ceiling: clamp (ride the edge) — barriers are the killers
+  const hitFloor = orb.y > H - orb.r, hitCeil = orb.y < orb.r;
+  if (hitFloor || hitCeil) {
+    const wasFast = Math.abs(orb.vy) > vMax() * 0.5;
+    orb.y = hitFloor ? H - orb.r : orb.r;
+    if (wasFast && Math.sign(orb.vy) === (hitFloor ? 1 : -1)) {
+      orb.squash = 0.3;
+      sfx.thud();
+      spawnParticles(orb.x, hitFloor ? H - 3 : 3, 5, orbHue(), H * 0.18, 0.4, 2.5);
+    }
+    orb.vy = 0;
+  }
+
+  // trail
+  trail.push({ x: orb.x, y: orb.y, life: 0 });
+  if (trail.length > 26) trail.shift();
+  for (let i = trail.length - 1; i >= 0; i--) {
+    const t = trail[i];
+    t.life += dt;
+    t.x -= speed * wdt;
+    if (t.life > 0.5) trail.splice(i, 1);
+  }
+
+  // stars parallax
+  for (const st of stars) {
+    st.x -= speed * st.z * wdt;
+    if (st.x < -2) { st.x = W + 2; st.y = Math.random() * H; }
+  }
+
+  // barriers (none during warmup — the first gate arrives once the player has settled in)
+  for (const b of barriers) b.x -= speed * wdt;
+  if (warmup <= 0 && (barriers.length === 0 ||
+      barriers[barriers.length - 1].x < W - spacingFor(streak, W))) {
+    spawnBarrier(Math.max(W + 30, barriers.length ? barriers[barriers.length - 1].x + spacingFor(streak, W) : W + 30));
+  }
+  while (barriers.length && barriers[0].x + barriers[0].w < -60) barriers.shift();
+
+  for (const b of barriers) {
+    if (overlapsBarrierX(orb.x, orb.r, b.x, b.w)) {
+      if (barrierHit(orb.x, orb.y, orb.r, b, H)) { die(); return; }
+      b.minC = Math.min(b.minC, gapClearance(orb.y, orb.r, b.c, b.half));
+    }
+    if (!b.scored && b.x + b.w < orb.x - orb.r) {
+      b.scored = true;
+      streak++;
+      streakEl.textContent = streak;
+      popStreakCounter();
+      sfx.pass(streak);
+      spawnParticles(orb.x + orb.r, orb.y, 9, orbHue(), H * 0.32, 0.5, 3);
+
+      if (isNearMiss(b.minC, orb.r)) {
+        closeCalls++;
+        glowPulse = 1;
+        shake = Math.max(shake, 5);
+        timeScale = 0.35; slowTimer = 0.2;
+        const edgeY = orb.y < b.c ? b.c - b.half : b.c + b.half;
+        spawnParticles(orb.x, edgeY, 14, 55, H * 0.5, 0.6, 3.5);
+        addFloater(orb.x, orb.y - orb.r * 3, 'CLOSE!', 22, 48);
+        sfx.nearMiss();
+        buzz(15);
+      }
+      if (streak % 10 === 0) {
+        milestoneFlash();
+        addFloater(W / 2, H * 0.32, String(streak), 64, orbHue());
+        sfx.milestone();
+        buzz(30);
+      }
+    }
+  }
+}
+
+// ---------- render ----------
+function render() {
+  const hue = orbHue();
+  const e = heat;
+
+  // background gradient — energy ramps with streak
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, 'hsl(232, 48%, ' + (5 + e * 3) + '%)');
+  g.addColorStop(1, 'hsl(' + hue + ', ' + (35 + e * 30) + '%, ' + (8 + e * 7) + '%)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // camera shake
+  ctx.save();
+  if (shake > 0.3) {
+    ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+  }
+
+  // stars
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  for (const st of stars) {
+    ctx.globalAlpha = 0.25 + st.z;
+    ctx.fillRect(st.x, st.y, st.s, st.s);
+  }
+  ctx.globalAlpha = 1;
+
+  // floor / ceiling energy lines
+  ctx.fillStyle = 'hsla(' + hue + ', 90%, 65%, ' + (0.25 + e * 0.3) + ')';
+  ctx.fillRect(0, 0, W, 2);
+  ctx.fillRect(0, H - 2, W, 2);
+
+  // drag-mode neutral midline (subtle) + steer glow toward current direction
+  if (controlMode === 'drag' && (state === PLAYING || state === READY)) {
+    const midY = H * 0.5;
+    ctx.fillStyle = 'hsla(' + hue + ', 80%, 68%, 0.09)';
+    ctx.fillRect(0, midY - 1, W, 2);
+    if (state === PLAYING) {
+      // subtle dashed neutral markers
+      ctx.fillStyle = 'hsla(' + hue + ', 80%, 72%, 0.14)';
+      for (let x = 0; x < W; x += 24) ctx.fillRect(x, midY - 0.5, 10, 1);
+      const s = steer;
+      if (Math.abs(s) > 0.02) {
+        const dir = s > 0 ? 1 : -1;
+        const bandH = H * 0.14 * Math.min(1, Math.abs(s));
+        const y0 = dir > 0 ? midY : midY - bandH;
+        const gg = ctx.createLinearGradient(0, midY, 0, midY + dir * bandH);
+        gg.addColorStop(0, 'hsla(' + hue + ', 90%, 66%, ' + (0.16 * Math.abs(s)) + ')');
+        gg.addColorStop(1, 'hsla(' + hue + ', 90%, 66%, 0)');
+        ctx.fillStyle = gg;
+        ctx.fillRect(0, y0, W, bandH);
+      }
+    }
+  }
+
+  // barriers — neon columns
+  for (const b of barriers) {
+    const gapTop = b.c - b.half, gapBot = b.c + b.half;
+    const bg = ctx.createLinearGradient(b.x, 0, b.x + b.w, 0);
+    bg.addColorStop(0, 'hsla(' + hue + ', 75%, 60%, 0.14)');
+    bg.addColorStop(0.5, 'hsla(' + hue + ', 75%, 62%, 0.3)');
+    bg.addColorStop(1, 'hsla(' + hue + ', 75%, 60%, 0.14)');
+    ctx.fillStyle = bg;
+    ctx.fillRect(b.x, 0, b.w, gapTop);
+    ctx.fillRect(b.x, gapBot, b.w, H - gapBot);
+
+    // bright caps at gap edges
+    ctx.fillStyle = 'hsl(' + hue + ', 92%, 68%)';
+    const capH = 4;
+    ctx.fillRect(b.x - 1, gapTop - capH, b.w + 2, capH);
+    ctx.fillRect(b.x - 1, gapBot, b.w + 2, capH);
+    // cap glow
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'hsla(' + hue + ', 92%, 68%, 0.16)';
+    ctx.fillRect(b.x - 6, gapTop - 12, b.w + 12, 12);
+    ctx.fillRect(b.x - 6, gapBot, b.w + 12, 12);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  ctx.globalCompositeOperation = 'lighter';
+
+  // trail
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i];
+    const a = (1 - t.life / 0.5) * 0.35;
+    if (a <= 0) continue;
+    const r = orb.r * (0.25 + 0.65 * (i / trail.length));
+    ctx.fillStyle = 'hsla(' + hue + ', 90%, 65%, ' + a + ')';
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, r, 0, 7);
+    ctx.fill();
+  }
+
+  // particles
+  for (const p of particles) {
+    const a = 1 - p.life / p.max;
+    ctx.fillStyle = 'hsla(' + p.hue + ', 95%, 68%, ' + (a * 0.9) + ')';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size * a + 0.4, 0, 7);
+    ctx.fill();
+  }
+
+  // orb (hidden while shattered)
+  if (state !== DYING && state !== OVER) {
+    let oy = orb.y;
+    if (state === READY) oy = H * 0.5 + Math.sin(bobT * 2.1) * H * 0.02;
+
+    const pulse = 1 + glowPulse * 0.5 + e * 0.25;
+    const glowR = orb.r * (3.2 * pulse);
+    const rg = ctx.createRadialGradient(orb.x, oy, 0, orb.x, oy, glowR);
+    rg.addColorStop(0, 'hsla(' + hue + ', 95%, 72%, 0.55)');
+    rg.addColorStop(0.35, 'hsla(' + hue + ', 95%, 65%, 0.18)');
+    rg.addColorStop(1, 'hsla(' + hue + ', 95%, 60%, 0)');
+    ctx.fillStyle = rg;
+    ctx.beginPath();
+    ctx.arc(orb.x, oy, glowR, 0, 7);
+    ctx.fill();
+
+    // squash & stretch with vertical speed
+    const k = clamp(Math.abs(orb.vy) / vMax(), 0, 1) * 0.22 + orb.squash * 0.5;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.save();
+    ctx.translate(orb.x, oy);
+    ctx.scale(1 - k * 0.6, 1 + k);
+    const core = ctx.createRadialGradient(0, 0, 0, 0, 0, orb.r);
+    core.addColorStop(0, '#ffffff');
+    core.addColorStop(0.55, 'hsl(' + hue + ', 95%, 78%)');
+    core.addColorStop(1, 'hsl(' + hue + ', 95%, 58%)');
+    ctx.fillStyle = core;
+    ctx.beginPath();
+    ctx.arc(0, 0, orb.r, 0, 7);
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // floaters (CLOSE! / milestone numbers)
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.textAlign = 'center';
+  for (const f of floaters) {
+    const t = f.life / f.max;
+    const a = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
+    const sc = 1 + t * 0.25;
+    ctx.font = '800 ' + Math.round(f.size * sc) + 'px -apple-system, sans-serif';
+    ctx.fillStyle = 'hsla(' + f.hue + ', 95%, 72%, ' + a + ')';
+    ctx.fillText(f.text, f.x, f.y);
+  }
+
+  ctx.restore();
+}
+
+// ---------- main loop ----------
+let lastT = 0;
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (!lastT) { lastT = t; return; }
+  let dt = (t - lastT) / 1000;
+  lastT = t;
+  if (dt > 0.05) dt = 0.05;              // clamp long frames (tab return, jank)
+  if (state === PAUSED) return;
+  update(dt);
+  render();
+}
+
+// ---------- boot ----------
+resize();
+initStars();
+reset();
+renderModeToggles();
+hintEl.textContent = controlMode === 'drag' ? 'hold & drag to steer' : 'tap to flip gravity';
+bestEl.textContent = 'BEST ' + best;
+if (best > 0) titleBestEl.textContent = 'BEST ' + best;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
